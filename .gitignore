@@ -1,2 +1,6 @@
 etc
+staging
 .ipynb_checkpoints
+.vscode
+
+*test*
