@@ -10,6 +10,7 @@ The dash_html_components package is deprecated. Please replace
 
 import os
 import pandas as pd
+import geopandas as gpd
 import dash
 from dash import dcc
 from dash import html
@@ -18,8 +19,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 from helper import filter_dataframe
 
+
 # PREP
-external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
+# external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
 LOGO_LINK = 'https://s3-us-west-1.amazonaws.com/plotly-tutorials/logo/new-branding/dash-logo-by-plotly-stripe.png'
 
 
@@ -27,6 +29,9 @@ LOGO_LINK = 'https://s3-us-west-1.amazonaws.com/plotly-tutorials/logo/new-brandi
 parent = os.getcwd()
 file = 'output/nyc-green-2020/'
 green_df = pd.read_parquet(os.path.join(parent, file))
+
+geo_df = gpd.read_file('/home/thomas/data/nyc_taxi/taxi_zones.zip')
+geo_df = geo_df.to_crs("EPSG:4326")
 
 
 # DASH APP
@@ -52,6 +57,7 @@ external_stylesheets = [
     }
 ]
 
+# external_stylesheets = ['/assets/bWLwgP.css']
 
 app = dash.Dash(__name__,
                 title='NYC Taxi Dashboard',
@@ -62,9 +68,9 @@ app.layout = html.Div(children=[
   html.Div(
     children=[
       html.Img(src=LOGO_LINK, style={'display':'inline-block', 'width':'200px','margin':'25px'}),
-      html.H1('NYC Green Taxi', style={'margin':'5px','display':'inline-block'}),
+      html.H1('NYC Green Taxi Dashboard', style={'margin':'5px','display':'inline-block'}),
     ],
-    style={'display':'inline-block', 'margin':'25px'}
+    style={'margin':'25px'}
   ),
   html.Div(
     children=[
@@ -84,7 +90,7 @@ app.layout = html.Div(children=[
           value=['Credit card','Cash'],
           multi=True,
           placeholder='Select payment types',
-          style={'width':'300px'}),
+          style={'width':'350px'}),
           html.Br(),
           html.H5('Passengers'),
           dcc.RangeSlider(id='passenger-slider',
@@ -94,7 +100,7 @@ app.layout = html.Div(children=[
           value=[1,2]),
           html.Br(),
           html.H5('Pick Up Dates'),
-          html.P('Please select with minimum range of 30 days.'),
+          html.P('Please select with a minimum range of 30 days.'),
           dcc.DatePickerRange(id='date-picker',
           start_date='2019-12-31',
           end_date='2020-12-31',
@@ -103,20 +109,22 @@ app.layout = html.Div(children=[
           minimum_nights=30,
           disabled=True)      
         ],
-        style={'display':'inline-block','width':'350px', 'margin':'0px 20px 10px 20px','padding':'5px','border':'2px #3260a8 solid'}
+        style={'display':'inline-block','width':'400px', 'margin':'20px','padding':'10px','border':'2px #3260a8 solid'}
       ),
-        html.Div(
-          children=[
-            html.Div(dcc.Graph(id='dist-time')),
-            html.Div(dcc.Graph(id='income-month')),
-            html.Div(dcc.Graph(id='order-month')),
-          ],
-          style={'display':'inline-block'})
+        html.Div([
+          dcc.Graph(id='map-zones'),
+          dcc.Graph(id='heatmap')],
+          style={'display':'inline-block', 'height':'1000px', 'width':'1000px'},
+        ),
+        html.Div([
+          dcc.Graph(id='dist-time'),
+          dcc.Graph(id='income-month'),
+          dcc.Graph(id='order-month')],
+          style={'display':'inline-block'}
+        )
     ]
-  ),
-  html.Div(dcc.Graph(id='payment-bar')),
-  html.Div(dcc.Graph(id='heatmap'))
-], style={'width':'1100px', 'height':'500px','margin':'0px 50px'})
+  )
+], style={'height':'400px','margin':'auto'})
 
 
 # CALLBACKS
@@ -142,9 +150,9 @@ def update_heatmap(vendor, payment, passenger):
   fig = px.imshow(hour_day,
                 labels=dict(x='Pick Up Hour', y='Pick Up Day', color='Number of Orders'),
                 aspect='auto', 
-                height=350, 
-                title='Bussiest hour every day',
-                color_continuous_scale='Aggrnyl')
+                height=350,
+                # color_continuous_scale='Aggrnyl')
+  )
 
   fig.update_xaxes(type='category')
 
@@ -163,14 +171,20 @@ def update_income_month(vendor, payment, passenger):
 
   income_month = df \
     .groupby('pu_month')['total_amount'] \
-    .agg('sum') \
-    .reset_index(name='income_per_month')
+    .agg(['count','sum']) \
+    .reset_index() \
+    .rename(columns={'count':'num_orders','sum':'income'})
 
   fig = px.line(data_frame=income_month, 
                 # title='Monthly Income',
                 x='pu_month', 
-                y='income_per_month',
+                y='income',
                 height=350)
+  fig.add_bar(
+    x=income_month['pu_month'],
+    y=income_month['num_orders'],
+    name='Orders'
+  )
   fig.update_xaxes(type='category')
               
   return fig
@@ -191,7 +205,7 @@ def update_order_month(vendor, payment, passenger):
     .agg('count') \
     .reset_index(name='order_per_month')
 
-  fig = px.line(data_frame=order_month, 
+  fig = px.bar(data_frame=order_month, 
                 # title='Monthly Orders',
                 x='pu_month', 
                 y='order_per_month',
@@ -209,6 +223,9 @@ def update_order_month(vendor, payment, passenger):
 def update_dist_time(vendor, payment, passenger):
   df = green_df.copy()
 
+  max_x = max(df['trip_distance'])
+  max_y = max(green_df['trip_duration_minute'])
+
   df = filter_dataframe(df, vendor, payment, passenger)
 
   green_trim = df \
@@ -223,31 +240,55 @@ def update_dist_time(vendor, payment, passenger):
                   color='fare_amount',
                   opacity=0.6,
                   height=350)
-              
+  fig.update_layout(yaxis_range=[-80, 1000 +100],
+                    xaxis_range=[-10, 150])
+                
   return fig
 
+# @app.callback(
+#   Output(component_id='payment-bar', component_property='figure'),
+#   Input(component_id='vendor-list', component_property='value'),
+#   Input(component_id='payment-dd', component_property='value'),
+#   Input(component_id='passenger-slider', component_property='value')
+# )
+# def update_payment(vendor, payment, passenger):
+#   df = green_df.copy()
+  
+#   payment = None
+#   df = filter_dataframe(df, vendor, payment, passenger)
+
+#   payment_count = df \
+#                       .groupby('payment')['payment'].agg('count') \
+#                       .reset_index(name='count') \
+#                       .sort_values(by='payment', ascending=False)
+
+#   fig = px.bar(data_frame=payment_count, 
+#                 x='count', 
+#                 y='payment',
+#                 orientation='h')
+#   fig.update_traces(width=0.65)
+
+#   return fig
+
 @app.callback(
-  Output(component_id='payment-bar', component_property='figure'),
+  Output(component_id='map-zones', component_property='figure'),
   Input(component_id='vendor-list', component_property='value'),
   Input(component_id='payment-dd', component_property='value'),
   Input(component_id='passenger-slider', component_property='value')
 )
 def update_payment(vendor, payment, passenger):
-  df = green_df.copy()
+
+  fig = px.choropleth_mapbox(geo_df,
+                           geojson=geo_df.geometry,
+                           locations=geo_df['LocationID'],
+                           color="Shape_Area",
+                           center={"lat": 40.7128, "lon": -74.0060},
+                           mapbox_style="open-street-map",
+                           opacity=0.7,
+                           zoom=9,
+                           height=600,
+                           width=970)
   
-  payment = None
-  df = filter_dataframe(df, vendor, payment, passenger)
-
-  payment_count = df \
-                      .groupby('payment')['payment'].agg('count') \
-                      .reset_index(name='count') \
-                      .sort_values(by='payment', ascending=False)
-
-  fig = px.bar(data_frame=payment_count, 
-                x='count', 
-                y='payment',
-                orientation='h')
-              
   return fig
 
 
